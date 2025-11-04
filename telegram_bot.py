@@ -1,7 +1,7 @@
 import os
 import logging
 import sys
-from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, ConversationHandler
+from telegram.ext import Application, CommandHandler, MessageHandler, filters
 
 # Настройка логирования
 logging.basicConfig(
@@ -28,24 +28,21 @@ except ImportError as e:
     logger.error(f"❌ Import error: {e}")
     sys.exit(1)
 
-# Упрощенный бот
-def start(update, context):
-    context.bot.send_message(
-        chat_id=update.effective_chat.id,
-        text="🤖 *Бизнес-Консультант AI* запущен! Напишите вашу бизнес-идею.",
+# Упрощенный бот для быстрого запуска
+async def start(update, context):
+    await update.message.reply_text(
+        "🤖 *Бизнес-Консультант AI* запущен!\n\n"
+        "Просто напишите вашу бизнес-идею одним сообщением, и я дам подробный анализ.",
         parse_mode='Markdown'
     )
 
-def handle_message(update, context):
+async def handle_message(update, context):
     user_input = update.message.text
     
-    context.bot.send_message(
-        chat_id=update.effective_chat.id,
-        text="🔄 Анализирую ваш запрос..."
-    )
+    await update.message.reply_text("🔄 Анализирую ваш запрос...")
     
     try:
-        # Создаем минимальные данные
+        # Создаем минимальные данные для анализа
         user_data = {
             "industry": "auto",
             "idea": user_input,
@@ -61,31 +58,34 @@ def handle_message(update, context):
         analyzer = DataAnalyzerAgent(db)
         advice = analyzer.generate_advice(user_data)
         
-        response = f"🎯 *РЕКОМЕНДАЦИИ:*\n\n{advice}\n\n---\n💡 Новый запрос? Просто напишите!"
+        # Отправляем результат
+        response = f"🎯 *РЕКОМЕНДАЦИИ:*\n\n{advice}\n\n---\n💡 Новый запрос? Просто напишите следующую идею!"
         
-        context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            text=response,
-            parse_mode='Markdown'
-        )
+        await update.message.reply_text(response, parse_mode='Markdown')
         
     except Exception as e:
         logger.error(f"Ошибка анализа: {e}")
-        context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            text="❌ Ошибка при анализе. Попробуйте еще раз."
-        )
+        await update.message.reply_text("❌ Ошибка при анализе. Попробуйте еще раз.")
+
+async def error_handler(update, context):
+    """Обработчик ошибок"""
+    logger.error(f"Ошибка в боте: {context.error}")
 
 def main():
-    updater = Updater(TOKEN, use_context=True)
-    dispatcher = updater.dispatcher
+    application = Application.builder().token(TOKEN).build()
     
-    dispatcher.add_handler(CommandHandler("start", start))
-    dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_message))
+    # Добавляем обработчики
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    application.add_error_handler(error_handler)
     
-    logger.info("🚀 Starting bot on Render with python-telegram-bot 13.15...")
-    updater.start_polling()
-    updater.idle()
+    logger.info("🚀 Starting bot with python-telegram-bot 21.11.1 on Python 3.13...")
+    
+    # Запускаем бота
+    application.run_polling(
+        drop_pending_updates=True,
+        allowed_updates=['message', 'callback_query']
+    )
 
 if __name__ == "__main__":
     main()
