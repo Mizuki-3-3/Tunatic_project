@@ -1,7 +1,7 @@
 import os
 import logging
 import sys
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ConversationHandler
+from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, ConversationHandler
 
 # Настройка логирования
 logging.basicConfig(
@@ -28,14 +28,21 @@ except ImportError as e:
     logger.error(f"❌ Import error: {e}")
     sys.exit(1)
 
-# Упрощенный бот для теста
-async def start(update, context):
-    await update.message.reply_text("🤖 *Бизнес-Консультант AI* запущен! Напишите вашу бизнес-идею одним сообщением.", parse_mode='Markdown')
+# Упрощенный бот
+def start(update, context):
+    context.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text="🤖 *Бизнес-Консультант AI* запущен! Напишите вашу бизнес-идею.",
+        parse_mode='Markdown'
+    )
 
-async def handle_message(update, context):
+def handle_message(update, context):
     user_input = update.message.text
     
-    await update.message.reply_text("🔄 Анализирую ваш запрос...")
+    context.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text="🔄 Анализирую ваш запрос..."
+    )
     
     try:
         # Создаем минимальные данные
@@ -56,20 +63,29 @@ async def handle_message(update, context):
         
         response = f"🎯 *РЕКОМЕНДАЦИИ:*\n\n{advice}\n\n---\n💡 Новый запрос? Просто напишите!"
         
-        await update.message.reply_text(response, parse_mode='Markdown')
+        context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=response,
+            parse_mode='Markdown'
+        )
         
     except Exception as e:
         logger.error(f"Ошибка анализа: {e}")
-        await update.message.reply_text("❌ Ошибка при анализе. Попробуйте еще раз.")
+        context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text="❌ Ошибка при анализе. Попробуйте еще раз."
+        )
 
 def main():
-    application = Application.builder().token(TOKEN).build()
+    updater = Updater(TOKEN, use_context=True)
+    dispatcher = updater.dispatcher
     
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    dispatcher.add_handler(CommandHandler("start", start))
+    dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_message))
     
-    logger.info("🚀 Starting bot on Render with Python 3.13...")
-    application.run_polling(drop_pending_updates=True)
+    logger.info("🚀 Starting bot on Render with python-telegram-bot 13.15...")
+    updater.start_polling()
+    updater.idle()
 
 if __name__ == "__main__":
     main()
