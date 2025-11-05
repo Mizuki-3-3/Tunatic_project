@@ -133,13 +133,11 @@ class InteractiveBusinessBot:
 💡 *Хотите проанализировать другую идею?* Напишите /start
             """
             
-            # Отправляем результат (разбиваем на части если слишком длинный)
+            # Отправляем результат
             if len(response_text) > 4096:
-                # Разбиваем на части по 4096 символов
                 parts = [response_text[i:i+4096] for i in range(0, len(response_text), 4096)]
                 for part in parts:
                     await update.message.reply_text(part, parse_mode='Markdown')
-                    await update.message.reply_chat_action(action="typing")
             else:
                 await update.message.reply_text(response_text, parse_mode='Markdown')
             
@@ -153,69 +151,56 @@ class InteractiveBusinessBot:
         """Отмена диалога"""
         user_id = update.effective_user.id
         
-        # Удаляем сессию пользователя
         if user_id in self.user_sessions:
             del self.user_sessions[user_id]
         
-        await update.message.reply_text(
-            "Диалог прерван. Если хотите начать заново - напишите /start"
-        )
+        await update.message.reply_text("Диалог прерван. /start - начать заново")
         return ConversationHandler.END
     
     async def help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Команда помощи"""
         help_text = """
 📖 *Помощь по боту:*
-
-/start - Начать новую бизнес-консультацию
-/help - Показать эту справку
-/cancel - Прервать текущий диалог
-
-*Как работает консультация:*
-1. Я задаю вопросы по одному о вашей бизнес-идее
-2. Вы отвечаете на них последовательно
-3. После сбора всех данных я анализирую и даю развернутые рекомендации
-4. Время анализа: 1-2 минуты
+/start - Начать консультацию
+/help - Эта справка  
+/cancel - Прервать диалог
         """
         await update.message.reply_text(help_text, parse_mode='Markdown')
     
     async def error_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Обработчик ошибок"""
+        # Игнорируем ошибки связанные с proxies
+        if "proxies" in str(context.error):
+            logger.warning("⚠️  Ignored proxies error (not supported in this version)")
+            return
         logger.error(f"Ошибка в боте: {context.error}")
     
     def run(self):
-        """Запуск бота"""
-        application = Application.builder().token(TOKEN).build()
-        
-        # Создаем ConversationHandler для управления диалогом
-        conv_handler = ConversationHandler(
-            entry_points=[CommandHandler('start', self.start_command)],
-            states={
-                COLLECTING_DATA: [
-                    MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_user_input)
-                ],
-            },
-            fallbacks=[
-                CommandHandler('cancel', self.cancel_command),
-                CommandHandler('help', self.help_command)
-            ]
-        )
-        
-        # Регистрируем обработчики
-        application.add_handler(conv_handler)
-        application.add_handler(CommandHandler('help', self.help_command))
-        
-        # Добавляем обработчик ошибок
-        application.add_error_handler(self.error_handler)
-        
-        # Запускаем бота
-        logger.info("🚀 Бот с интерактивным диалогом запущен!")
-        logger.info("💬 Бот будет задавать вопросы по одному, как в консольной версии")
-        
-        application.run_polling(
-            drop_pending_updates=True,
-            allowed_updates=['message', 'callback_query']
-        )
+        """Запуск бота БЕЗ proxies"""
+        try:
+            # ВАЖНО: создаем Application БЕЗ параметра proxies
+            application = Application.builder().token(TOKEN).build()
+            
+            # ConversationHandler для диалога
+            conv_handler = ConversationHandler(
+                entry_points=[CommandHandler('start', self.start_command)],
+                states={
+                    COLLECTING_DATA: [
+                        MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_user_input)
+                    ],
+                },
+                fallbacks=[CommandHandler('cancel', self.cancel_command)]
+            )
+            
+            application.add_handler(conv_handler)
+            application.add_handler(CommandHandler('help', self.help_command))
+            application.add_error_handler(self.error_handler)
+            
+            logger.info("🚀 Запускаем бота с интерактивным диалогом...")
+            application.run_polling(drop_pending_updates=True)
+            
+        except Exception as e:
+            logger.error(f"❌ Критическая ошибка запуска: {e}")
 
 def main():
     bot = InteractiveBusinessBot()
