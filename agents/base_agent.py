@@ -1,4 +1,4 @@
-from openai import OpenAI
+import requests
 from config import config
 import json
 import re
@@ -39,4 +39,5 @@ class BaseAgent:
                 return json.loads(json_match.group())
             return {"raw_response": text}
         except:
+
             return {"raw_response": text}
