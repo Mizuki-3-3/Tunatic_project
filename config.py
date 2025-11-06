@@ -17,7 +17,7 @@ class Config:
     
   
     # Новое для OpenRouter + DeepSeek
-    OPENROUTER_API_KEY: str = os.getenv("OPENROUTER_API_KEY", "")
+    OPENROUTER_API_KEY: str = os.getenv("OPENROUTER_API_KEY")
     OPENROUTER_BASE_URL: str = "https://openrouter.ai/api/v1"
     MODEL: str = "deepseek/deepseek-v3.2-exp"  # Модель через OpenRouter
     
@@ -25,12 +25,8 @@ class Config:
     MAX_TOKENS: int = 2000
     
     # Пути к данным
-    DB_PATH: str = os.path.join(os.path.dirname(__file__), "..", "data", "database.json")
-    PARSED_DATA_PATH: str = os.path.join(os.path.dirname(__file__), "..", "data", "parsed_data")
-
-    def __post_init__(self):
-        os.makedirs(os.path.dirname(self.DB_PATH), exist_ok=True)
-        os.makedirs(self.PARSED_DATA_PATH, exist_ok=True)
+    DB_PATH: str = "data/database.json"
+    PARSED_DATA_PATH: str = "data/parsed_data/"
 
 
     # Промпты для агентов
@@ -70,6 +66,5 @@ class Config:
 
 Верни JSON: {"is_valid": bool, "issues": list, "confidence_score": float}"""
     }
-
 
 config = Config()
