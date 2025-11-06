@@ -2,7 +2,7 @@ import os
 import logging
 from flask import Flask, request
 from telegram import Update
-from telegram.ext import Updater, CommandHandler, MessageHandler, filters, CallbackContext, ConversationHandler
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, ConversationHandler
 
 # Настройка логирования
 logging.basicConfig(
@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__)
 
 # Глобальные переменные
-updater = None
+application = None
 USER_SESSIONS = {}
 
 # Состояния диалога
@@ -26,19 +26,18 @@ def home():
     return "🤖 Business Consultant Bot is running on Render!"
 
 @app.route('/webhook', methods=['POST'])
-def webhook():
+async def webhook():
     """Webhook endpoint для Telegram"""
     if request.method == "POST":
-        if updater:
-            json_str = request.get_data().decode('UTF-8')
-            update = Update.de_json(json_str, updater.bot)
-            updater.dispatcher.process_update(update)
+        if application:
+            update = Update.de_json(request.get_json(), application.bot)
+            await application.process_update(update)
         return "OK"
     return "Method not allowed", 405
 
-def start(update: Update, context: CallbackContext) -> int:
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Начинает новый диалог с пользователем."""
-    user_id = update.message.from_user.id
+    user_id = update.effective_user.id
     
     try:
         from agents.data_collector import DataCollectorAgent
@@ -51,25 +50,25 @@ def start(update: Update, context: CallbackContext) -> int:
             'collected_data': None
         }
         
-        update.message.reply_text(
+        await update.message.reply_text(
             "🤖 *Бизнес-Консультант AI*\n\nДавайте начнем сбор информации!",
             parse_mode='Markdown'
         )
-        update.message.reply_text(first_question)
+        await update.message.reply_text(first_question)
         return COLLECTING_DATA
         
     except Exception as e:
         logger.error(f"Start error: {e}")
-        update.message.reply_text("❌ Ошибка инициализации. Попробуйте позже.")
+        await update.message.reply_text("❌ Ошибка инициализации. Попробуйте позже.")
         return ConversationHandler.END
 
-def handle_user_input(update: Update, context: CallbackContext) -> int:
+async def handle_user_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Обрабатывает ввод пользователя."""
-    user_id = update.message.from_user.id
+    user_id = update.effective_user.id
     user_input = update.message.text
     
     if user_id not in USER_SESSIONS:
-        update.message.reply_text("Начните с /start")
+        await update.message.reply_text("Начните с /start")
         return ConversationHandler.END
     
     session = USER_SESSIONS[user_id]
@@ -80,7 +79,7 @@ def handle_user_input(update: Update, context: CallbackContext) -> int:
         
         if collected_data:
             session['collected_data'] = collected_data
-            update.message.reply_text("✅ *Данные собраны! Анализирую...*", parse_mode='Markdown')
+            await update.message.reply_text("✅ *Данные собраны! Анализирую...*", parse_mode='Markdown')
             
             # Анализ данных
             from agents.data_analyzer import DataAnalyzerAgent
@@ -96,9 +95,9 @@ def handle_user_input(update: Update, context: CallbackContext) -> int:
             if len(response_text) > 4096:
                 parts = [response_text[i:i+4000] for i in range(0, len(response_text), 4000)]
                 for part in parts:
-                    update.message.reply_text(part, parse_mode='Markdown')
+                    await update.message.reply_text(part, parse_mode='Markdown')
             else:
-                update.message.reply_text(response_text, parse_mode='Markdown')
+                await update.message.reply_text(response_text, parse_mode='Markdown')
             
             # Сохраняем в базу
             db.add_parsed_source({
@@ -111,23 +110,23 @@ def handle_user_input(update: Update, context: CallbackContext) -> int:
             del USER_SESSIONS[user_id]
             return ConversationHandler.END
         else:
-            update.message.reply_text(next_question)
+            await update.message.reply_text(next_question)
             return COLLECTING_DATA
             
     except Exception as e:
         logger.error(f"Input handling error: {e}")
-        update.message.reply_text("❌ Ошибка обработки. /start - начать заново")
+        await update.message.reply_text("❌ Ошибка обработки. /start - начать заново")
         return ConversationHandler.END
 
-def cancel(update: Update, context: CallbackContext) -> int:
+async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Отменяет диалог."""
-    user_id = update.message.from_user.id
+    user_id = update.effective_user.id
     if user_id in USER_SESSIONS:
         del USER_SESSIONS[user_id]
-    update.message.reply_text("❌ Диалог прерван. /start - начать заново")
+    await update.message.reply_text("❌ Диалог прерван. /start - начать заново")
     return ConversationHandler.END
 
-def help_command(update: Update, context: CallbackContext):
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает справку."""
     help_text = """
 📖 *Бизнес-Консультант AI*
@@ -135,22 +134,16 @@ def help_command(update: Update, context: CallbackContext):
 /start - Начать консультацию
 /help - Справка  
 /cancel - Прервать диалог
-
-*Как работает:*
-1. Задаю вопросы по одному
-2. Вы отвечаете последовательно
-3. Анализирую данные
-4. Даю рекомендации
     """
-    update.message.reply_text(help_text, parse_mode='Markdown')
+    await update.message.reply_text(help_text, parse_mode='Markdown')
 
-def error_handler(update: Update, context: CallbackContext):
+async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обрабатывает ошибки."""
     logger.error(f"Update {update} caused error {context.error}")
 
 def setup_bot():
-    """Настраивает и запускает бота."""
-    global updater
+    """Настраивает бота."""
+    global application
     
     BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
     
@@ -159,9 +152,8 @@ def setup_bot():
         return False
     
     try:
-        # Создаем updater
-        updater = Updater(token=BOT_TOKEN, use_context=True)
-        dispatcher = updater.dispatcher
+        # Создаем application
+        application = Application.builder().token(BOT_TOKEN).build()
         
         # Настройка обработчиков
         conv_handler = ConversationHandler(
@@ -177,9 +169,9 @@ def setup_bot():
             ]
         )
         
-        dispatcher.add_handler(conv_handler)
-        dispatcher.add_handler(CommandHandler('help', help_command))
-        dispatcher.add_error_handler(error_handler)
+        application.add_handler(conv_handler)
+        application.add_handler(CommandHandler('help', help_command))
+        application.add_error_handler(error_handler)
         
         logger.info("Bot setup completed successfully")
         return True
@@ -197,21 +189,22 @@ def main():
         # На Render используем webhook
         render_url = os.getenv("RENDER_EXTERNAL_URL")
         
-        if render_url and updater:
+        if render_url and application:
             # Webhook режим для Render
             webhook_url = f"{render_url}/webhook"
             logger.info(f"Starting webhook on {webhook_url}")
             
-            updater.start_webhook(
+            application.run_webhook(
                 listen="0.0.0.0",
                 port=port,
-                url_path=os.getenv("TELEGRAM_BOT_TOKEN"),
-                webhook_url=webhook_url
+                url_path=BOT_TOKEN,
+                webhook_url=webhook_url,
+                drop_pending_updates=True
             )
         else:
             # Polling режим для локального тестирования
             logger.info("Starting polling mode...")
-            updater.start_polling()
+            application.run_polling(drop_pending_updates=True)
     else:
         logger.error("Failed to setup bot")
         # Запускаем Flask даже если бот не настроен
