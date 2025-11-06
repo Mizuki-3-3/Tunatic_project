@@ -1,9 +1,8 @@
 import os
 import logging
 from flask import Flask, request
-import telegram
 from telegram import Update
-from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext, ConversationHandler
+from telegram.ext import Updater, CommandHandler, MessageHandler, filters, CallbackContext, ConversationHandler
 
 # Настройка логирования
 logging.basicConfig(
@@ -30,9 +29,10 @@ def home():
 def webhook():
     """Webhook endpoint для Telegram"""
     if request.method == "POST":
-        json_str = request.get_data().decode('UTF-8')
-        update = Update.de_json(json_str, updater.bot)
-        updater.dispatcher.process_update(update)
+        if updater:
+            json_str = request.get_data().decode('UTF-8')
+            update = Update.de_json(json_str, updater.bot)
+            updater.dispatcher.process_update(update)
         return "OK"
     return "Method not allowed", 405
 
@@ -86,7 +86,7 @@ def handle_user_input(update: Update, context: CallbackContext) -> int:
             from agents.data_analyzer import DataAnalyzerAgent
             from database.json_db import JSONDatabase
             
-            db = JSONDatabase("data/database.json")
+            db = JSONDatabase()
             analyzer = DataAnalyzerAgent(db)
             advice = analyzer.generate_advice(collected_data)
             
@@ -168,7 +168,7 @@ def setup_bot():
             entry_points=[CommandHandler('start', start)],
             states={
                 COLLECTING_DATA: [
-                    MessageHandler(Filters.text & ~Filters.command, handle_user_input)
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, handle_user_input)
                 ],
             },
             fallbacks=[
@@ -205,15 +205,13 @@ def main():
             updater.start_webhook(
                 listen="0.0.0.0",
                 port=port,
-                url_path=BOT_TOKEN,
+                url_path=os.getenv("TELEGRAM_BOT_TOKEN"),
                 webhook_url=webhook_url
             )
-            updater.idle()
         else:
             # Polling режим для локального тестирования
             logger.info("Starting polling mode...")
             updater.start_polling()
-            updater.idle()
     else:
         logger.error("Failed to setup bot")
         # Запускаем Flask даже если бот не настроен
