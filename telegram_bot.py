@@ -1,214 +1,260 @@
 import os
 import logging
-from flask import Flask, request
+import json
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, ConversationHandler
+from dotenv import load_dotenv
+
+# Импортируем вашу существующую систему
+from agents.data_collector import DataCollectorAgent
+from agents.data_analyzer import DataAnalyzerAgent
+from database.json_db import JSONDatabase
 
 # Настройка логирования
 logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
 
-# Flask app для Render
-app = Flask(__name__)
-
-# Глобальные переменные
-application = None
-USER_SESSIONS = {}
+# Загружаем переменные окружения
+load_dotenv()
 
 # Состояния диалога
-COLLECTING_DATA = 1
+COLLECTING_DATA, ANALYZING = range(2)
 
-@app.route('/')
-def home():
-    return "🤖 Business Consultant Bot is running on Render!"
 
-@app.route('/webhook', methods=['POST'])
-async def webhook():
-    """Webhook endpoint для Telegram"""
-    if request.method == "POST":
-        if application:
-            update = Update.de_json(request.get_json(), application.bot)
-            await application.process_update(update)
-        return "OK"
-    return "Method not allowed", 405
+class InteractiveBusinessBot:
+    def __init__(self, token):
+        self.token = token
+        self.db = JSONDatabase("data/database.json")
+        self.user_sessions = {}  # Храним сессии пользователей
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Начинает новый диалог с пользователем."""
-    user_id = update.effective_user.id
-    
-    try:
-        from agents.data_collector import DataCollectorAgent
-        
+    async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Начало диалога - команда /start"""
+        user_id = update.effective_user.id
+
+        # Создаем нового сборщика данных для пользователя
         collector = DataCollectorAgent()
         first_question = collector.start_conversation()
-        
-        USER_SESSIONS[user_id] = {
+
+        # Сохраняем сессию пользователя
+        self.user_sessions[user_id] = {
             'collector': collector,
             'collected_data': None
         }
-        
-        await update.message.reply_text(
-            "🤖 *Бизнес-Консультант AI*\n\nДавайте начнем сбор информации!",
-            parse_mode='Markdown'
-        )
-        await update.message.reply_text(first_question)
-        return COLLECTING_DATA
-        
-    except Exception as e:
-        logger.error(f"Start error: {e}")
-        await update.message.reply_text("❌ Ошибка инициализации. Попробуйте позже.")
-        return ConversationHandler.END
 
-async def handle_user_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Обрабатывает ввод пользователя."""
-    user_id = update.effective_user.id
-    user_input = update.message.text
-    
-    if user_id not in USER_SESSIONS:
-        await update.message.reply_text("Начните с /start")
-        return ConversationHandler.END
-    
-    session = USER_SESSIONS[user_id]
-    collector = session['collector']
-    
-    try:
-        next_question, collected_data = collector.process_user_input(user_input)
-        
-        if collected_data:
-            session['collected_data'] = collected_data
-            await update.message.reply_text("✅ *Данные собраны! Анализирую...*", parse_mode='Markdown')
-            
-            # Анализ данных
-            from agents.data_analyzer import DataAnalyzerAgent
-            from database.json_db import JSONDatabase
-            
-            db = JSONDatabase()
-            analyzer = DataAnalyzerAgent(db)
-            advice = analyzer.generate_advice(collected_data)
-            
-            response_text = f"🎯 *РЕКОМЕНДАЦИИ:*\n\n{advice}\n\n---\n💡 /start - новая консультация"
-            
-            # Разбиваем длинные сообщения
+        welcome_text = """
+🤖 *Бизнес-Консультант AI*
+
+Я помогу вам проанализировать бизнес-идею. Будем собирать информацию по шагам.
+
+*Давайте начнем!*
+        """
+
+        await update.message.reply_text(welcome_text, parse_mode='Markdown')
+        await update.message.reply_text(first_question)
+
+        return COLLECTING_DATA
+
+    async def handle_user_input(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Обработка ответов пользователя в диалоге"""
+        user_id = update.effective_user.id
+        user_input = update.message.text
+
+        # Проверяем активную сессию
+        if user_id not in self.user_sessions:
+            await update.message.reply_text("Напишите /start чтобы начать консультацию")
+            return COLLECTING_DATA
+
+        session = self.user_sessions[user_id]
+        collector = session['collector']
+
+        try:
+            # Обрабатываем ввод пользователя
+            next_question, collected_data = collector.process_user_input(user_input)
+
+            if collected_data:
+                # Данные собраны, переходим к анализу
+                session['collected_data'] = collected_data
+
+                await update.message.reply_text(
+                    "✅ *Данные собраны! Анализирую вашу бизнес-идею...*\n"
+                    "⏳ Это займет 1-2 минуты",
+                    parse_mode='Markdown'
+                )
+
+                # Запускаем анализ
+                await self._generate_analysis(update, collected_data, user_id)
+
+                # Завершаем диалог
+                if user_id in self.user_sessions:
+                    del self.user_sessions[user_id]
+
+                return ConversationHandler.END
+
+            else:
+                # Задаем следующий вопрос
+                await update.message.reply_text(next_question)
+                return COLLECTING_DATA
+
+        except Exception as e:
+            logger.error(f"Ошибка обработки ввода: {e}")
+            await update.message.reply_text(
+                "❌ Произошла ошибка. Давайте попробуем еще раз - /start"
+            )
+            return ConversationHandler.END
+
+    async def _generate_analysis(self, update: Update, user_data: dict, user_id: int):
+        """Генерация анализа и рекомендаций"""
+        try:
+            # Создаем анализатор
+            analyzer = DataAnalyzerAgent(self.db)
+
+            # Показываем действие "печатает"
+            await update.message.reply_chat_action(action="typing")
+
+            # Генерируем рекомендации
+            advice = analyzer.generate_advice(user_data)
+
+            # Форматируем ответ
+            response_text = f"""
+🎯 *РЕКОМЕНДАЦИИ ДЛЯ ВАШЕГО БИЗНЕСА*
+
+{advice}
+
+---
+💡 *Хотите проанализировать другую идею?* Напишите /start
+            """
+
+            # Отправляем результат (разбиваем на части если слишком длинный)
             if len(response_text) > 4096:
-                parts = [response_text[i:i+4000] for i in range(0, len(response_text), 4000)]
+                # Разбиваем на части по 4096 символов
+                parts = [response_text[i:i + 4096] for i in range(0, len(response_text), 4096)]
                 for part in parts:
                     await update.message.reply_text(part, parse_mode='Markdown')
+                    await update.message.reply_chat_action(action="typing")
             else:
                 await update.message.reply_text(response_text, parse_mode='Markdown')
-            
-            # Сохраняем в базу
-            db.add_parsed_source({
-                "type": "telegram_query",
+
+            # Сохраняем в базу данных
+            self.db.add_parsed_source({
+                "type": "telegram_user_query",
                 "user_id": user_id,
-                "data": collected_data,
+                "data": user_data,
                 "response_preview": advice[:200] + "..."
             })
-            
-            del USER_SESSIONS[user_id]
-            return ConversationHandler.END
-        else:
-            await update.message.reply_text(next_question)
-            return COLLECTING_DATA
-            
-    except Exception as e:
-        logger.error(f"Input handling error: {e}")
-        await update.message.reply_text("❌ Ошибка обработки. /start - начать заново")
+
+            logger.info(f"Успешный анализ для пользователя {user_id}")
+
+        except Exception as e:
+            logger.error(f"Ошибка генерации анализа: {e}")
+            await update.message.reply_text(
+                "❌ Произошла ошибка при анализе данных. Попробуйте еще раз - /start"
+            )
+
+    async def cancel_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Отмена диалога"""
+        user_id = update.effective_user.id
+
+        # Удаляем сессию пользователя
+        if user_id in self.user_sessions:
+            del self.user_sessions[user_id]
+
+        await update.message.reply_text(
+            "Диалог прерван. Если хотите начать заново - напишите /start"
+        )
         return ConversationHandler.END
 
-async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Отменяет диалог."""
-    user_id = update.effective_user.id
-    if user_id in USER_SESSIONS:
-        del USER_SESSIONS[user_id]
-    await update.message.reply_text("❌ Диалог прерван. /start - начать заново")
-    return ConversationHandler.END
+    async def help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Команда помощи"""
+        help_text = """
+📖 *Помощь по боту:*
 
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Показывает справку."""
-    help_text = """
-📖 *Бизнес-Консультант AI*
+/start - Начать новую бизнес-консультацию
+/help - Показать эту справку
+/cancel - Прервать текущий диалог
 
-/start - Начать консультацию
-/help - Справка  
-/cancel - Прервать диалог
-    """
-    await update.message.reply_text(help_text, parse_mode='Markdown')
+*Как работает консультация:*
+1. Я задаю вопросы по одному о вашей бизнес-идее
+2. Вы отвечаете на них последовательно
+3. После сбора всех данных я анализирую и даю развернутые рекомендации
+4. Время анализа: 1-2 минуты
 
-async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обрабатывает ошибки."""
-    logger.error(f"Update {update} caused error {context.error}")
+*Собираемая информация:*
+- Сфера деятельности
+- Конкретная идея
+- Город/регион  
+- Бюджет
+- Опыт в сфере
+- Целевая аудитория
+- Особые пожелания
+        """
+        await update.message.reply_text(help_text, parse_mode='Markdown')
 
-def setup_bot():
-    """Настраивает бота."""
-    global application
-    
-    BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-    
-    if not BOT_TOKEN:
-        logger.error("TELEGRAM_BOT_TOKEN not found")
-        return False
-    
-    try:
-        # Создаем application
-        application = Application.builder().token(BOT_TOKEN).build()
-        
-        # Настройка обработчиков
-        conv_handler = ConversationHandler(
-            entry_points=[CommandHandler('start', start)],
-            states={
-                COLLECTING_DATA: [
-                    MessageHandler(filters.TEXT & ~filters.COMMAND, handle_user_input)
-                ],
-            },
-            fallbacks=[
-                CommandHandler('cancel', cancel),
-                CommandHandler('help', help_command)
-            ]
-        )
-        
-        application.add_handler(conv_handler)
-        application.add_handler(CommandHandler('help', help_command))
-        application.add_error_handler(error_handler)
-        
-        logger.info("Bot setup completed successfully")
-        return True
-        
-    except Exception as e:
-        logger.error(f"Bot setup failed: {e}")
-        return False
+    async def error_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Обработчик ошибок"""
+        logger.error(f"Ошибка в боте: {context.error}")
+
+        try:
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id if update else None,
+                text="❌ Произошла техническая ошибка. Попробуйте позже."
+            )
+        except Exception:
+            pass
+
+    def run(self):
+        """Запуск бота"""
+        try:
+            application = Application.builder().token(self.token).build()
+
+            # Создаем ConversationHandler для управления диалогом
+            conv_handler = ConversationHandler(
+                entry_points=[CommandHandler('start', self.start_command)],
+                states={
+                    COLLECTING_DATA: [
+                        MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_user_input)
+                    ],
+                },
+                fallbacks=[
+                    CommandHandler('cancel', self.cancel_command),
+                    CommandHandler('help', self.help_command)
+                ]
+            )
+
+            # Регистрируем обработчики
+            application.add_handler(conv_handler)
+            application.add_handler(CommandHandler('help', self.help_command))
+            application.add_handler(CommandHandler('cancel', self.cancel_command))
+
+            # Добавляем обработчик ошибок
+            application.add_error_handler(self.error_handler)
+
+            # Запускаем бота
+            print("🤖 Бот с интерактивным диалогом запущен!")
+            print("💬 Бот будет задавать вопросы по одному, как в консольной версии")
+
+            application.run_polling(
+                drop_pending_updates=True,
+                allowed_updates=['message', 'callback_query']
+            )
+
+        except Exception as e:
+            print(f"❌ Критическая ошибка запуска: {e}")
+
 
 def main():
-    """Запуск приложения."""
-    port = int(os.environ.get("PORT", 5000))
-    
-    # Настраиваем бота
-    if setup_bot():
-        # На Render используем webhook
-        render_url = os.getenv("RENDER_EXTERNAL_URL")
-        
-        if render_url and application:
-            # Webhook режим для Render
-            webhook_url = f"{render_url}/webhook"
-            logger.info(f"Starting webhook on {webhook_url}")
-            
-            application.run_webhook(
-                listen="0.0.0.0",
-                port=port,
-                url_path=BOT_TOKEN,
-                webhook_url=webhook_url,
-                drop_pending_updates=True
-            )
-        else:
-            # Polling режим для локального тестирования
-            logger.info("Starting polling mode...")
-            application.run_polling(drop_pending_updates=True)
-    else:
-        logger.error("Failed to setup bot")
-        # Запускаем Flask даже если бот не настроен
-        app.run(host='0.0.0.0', port=port)
+    """Точка входа"""
+    BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+
+    if not BOT_TOKEN:
+        print("❌ Ошибка: TELEGRAM_BOT_TOKEN не найден в .env файле")
+        return
+
+    bot = InteractiveBusinessBot(BOT_TOKEN)
+    bot.run()
+
 
 if __name__ == "__main__":
     main()
