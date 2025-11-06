@@ -1,25 +1,25 @@
 import json
 import os
-from typing import Dict, List, Any
-from datetime import datetime
+from config import config
 
 class JSONDatabase:
     def __init__(self, db_path: str):
-        self.db_path = db_path
+        self.db_path = db_path or config.DB_PATH
         self._ensure_db_exists()
     
     def _ensure_db_exists(self):
         """Создаёт файл БД если его нет"""
-        os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
-        if not os.path.exists(self.db_path):
-            initial_data = {
-                "business_trends": [],
-                "success_stories": [],
-                "market_data": [],
-                "parsed_sources": [],
-                "created_at": datetime.now().isoformat(),
-                "updated_at": datetime.now().isoformat()
-            }
+        try:
+            os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
+            if not os.path.exists(self.db_path):
+                initial_data = {
+                    "business_trends": [],
+                    "success_stories": [],
+                    "market_data": [],
+                    "parsed_sources": [],
+                    "created_at": datetime.now().isoformat(),
+                    "updated_at": datetime.now().isoformat()
+                }
             self._save_data(initial_data)
     
     def _load_data(self) -> Dict:
@@ -74,4 +74,5 @@ if __name__ == "__main__":
         "risks": "Высокая конкуренция",
         "sources": ["Habr", "VC.ru"],
         "city": "Москва"
+
     })
