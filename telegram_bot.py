@@ -5,7 +5,11 @@ from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, ConversationHandler
 from dotenv import load_dotenv
 
-# Импортируем вашу существующую систему
+#для пинга реплита
+from flask import Flask
+from threading import Threading
+import time
+
 from agents.data_collector import DataCollectorAgent
 from agents.data_analyzer import DataAnalyzerAgent
 from database.json_db import JSONDatabase
@@ -23,6 +27,19 @@ load_dotenv()
 # Состояния диалога
 COLLECTING_DATA, ANALYZING = range(2)
 
+app = Flask("")
+
+@app.route('/')
+def home():
+    return "bot is working"
+def run_flask():
+    port = int(os.environ.get('PORT', 8080))
+    app.run(host('0.0.0.0', port = port)
+def keep_alive():
+    t = Thread(target=run_flask)
+    t.daemon = True
+    t.start
+    print('bot is starting to work')
 
 class InteractiveBusinessBot:
     def __init__(self, token):
@@ -233,7 +250,7 @@ class InteractiveBusinessBot:
 
             # Запускаем бота
             print("🤖 Бот с интерактивным диалогом запущен!")
-            print("💬 Бот будет задавать вопросы по одному, как в консольной версии")
+            print("💬 Бот будет задавать вопросы по одному.")
 
             application.run_polling(
                 drop_pending_updates=True,
@@ -258,3 +275,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
